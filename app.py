@@ -26,19 +26,29 @@ def get_solver_path(solver_name):
         return None
 
 def check_and_install_solvers():
-    needed = []
-    if get_solver_path('ipopt') is None: needed.append('coin') # Ipopt is in 'coin'
-    if get_solver_path('glpk') is None: needed.append('glpk')
-    
-    if needed:
-        # Use set() to avoid duplicates like ['coin', 'glpk']
-        needed = list(set(needed))
-        with st.status(f"🛠️ Solvers missing ({', '.join(needed)}). Installing now...") as status:
+    # Determine which solvers are missing
+    missing = []
+    if get_solver_path('ipopt') is None:
+        missing.append('coin')  # Ipopt lives in the 'coin' module
+    if get_solver_path('glpk') is None:
+        missing.append('glpk')
+
+    if missing:
+        # Remove duplicates just in case
+        missing = list(set(missing))
+        with st.status(f"🛠️ Installing missing solvers: {', '.join(missing)}...") as status:
             try:
                 from amplpy import modules
-                modules.install(needed)
+                modules.install(missing)
+                # After installation, refresh PATH by re‑adding the directories where the binaries were placed
+                for solver in ['ipopt', 'glpk']:
+                    p = modules.find(solver)
+                    if p:
+                        dir_path = os.path.dirname(p)
+                        if dir_path not in os.environ.get('PATH', ''):
+                            os.environ['PATH'] = f"{dir_path}:{os.environ.get('PATH', '')}"
                 status.update(label="✅ Solvers installed successfully!", state="complete", expanded=False)
-                # Force a re-run to ensure the newly installed PATH is picked up
+                # Force a full rerun so the newly‑installed executables are discovered
                 st.rerun()
             except Exception as e:
                 st.error(f"❌ Failed to install solvers: {e}")
