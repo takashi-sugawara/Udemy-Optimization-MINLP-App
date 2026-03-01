@@ -27,15 +27,19 @@ def get_solver_path(solver_name):
 
 def check_and_install_solvers():
     needed = []
-    if get_solver_path('ipopt') is None: needed.append('ipopt')
+    if get_solver_path('ipopt') is None: needed.append('coin') # Ipopt is in 'coin'
     if get_solver_path('glpk') is None: needed.append('glpk')
     
     if needed:
+        # Use set() to avoid duplicates like ['coin', 'glpk']
+        needed = list(set(needed))
         with st.status(f"🛠️ Solvers missing ({', '.join(needed)}). Installing now...") as status:
             try:
                 from amplpy import modules
                 modules.install(needed)
                 status.update(label="✅ Solvers installed successfully!", state="complete", expanded=False)
+                # Force a re-run to ensure the newly installed PATH is picked up
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ Failed to install solvers: {e}")
                 status.update(label="❌ Installation failed", state="error")
