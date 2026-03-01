@@ -11,20 +11,34 @@ import contextlib
 import shutil
 
 # --- Universal Solver Setup ---
-# This ensures solvers can be found on both Streamlit Cloud (Conda) and Local Mac (amplpy)
+# This ensures solvers can be found on both Streamlit Cloud (Auto-install) and Local Mac
 def get_solver_path(solver_name):
-    # First, try to find in system PATH (e.g. locally installed or from Conda)
+    # Try system PATH
     path = shutil.which(solver_name)
     if path:
         return path
     
-    # Second, try to find in amplpy-modules (reliable for Streamlit Cloud)
+    # Try amplpy-modules discovery
     try:
         from amplpy import modules
-        path = modules.find(solver_name)
-        return path
+        return modules.find(solver_name)
     except:
         return None
+
+def check_and_install_solvers():
+    needed = []
+    if get_solver_path('ipopt') is None: needed.append('ipopt')
+    if get_solver_path('glpk') is None: needed.append('glpk')
+    
+    if needed:
+        with st.status(f"🛠️ Solvers missing ({', '.join(needed)}). Installing now...") as status:
+            try:
+                from amplpy import modules
+                modules.install(needed)
+                status.update(label="✅ Solvers installed successfully!", state="complete", expanded=False)
+            except Exception as e:
+                st.error(f"❌ Failed to install solvers: {e}")
+                status.update(label="❌ Installation failed", state="error")
 
 # Page Config
 st.set_page_config(
@@ -79,6 +93,9 @@ st.markdown("""
 # --- Header ---
 st.title("🚀 MINLP Master Visualizer")
 st.caption("Mixed-Integer Non-Linear Programming Dashboard | Powered by MindtPy & COIN-OR")
+
+# Check and install solvers if missing (one-time on app start)
+check_and_install_solvers()
 
 # --- Sidebar: Expert Controls ---
 with st.sidebar:
