@@ -187,130 +187,130 @@ if st.session_state.res:
     m_rel = st.session_state.res['rel']
 
     with tab_vis:
-        col1, col2 = st.columns([1, 2])
+        # 1. Summary Metrics at the top
+        st.markdown('<p class="metric-label">Optimal Objective Value</p>', unsafe_allow_html=True)
+        st.markdown(f'<p class="metric-value">{pyo.value(m.obj):.4f}</p>', unsafe_allow_html=True)
         
-        with col1:
-            st.markdown('<p class="metric-label">Optimal Objective Value</p>', unsafe_allow_html=True)
-            st.markdown(f'<p class="metric-value">{pyo.value(m.obj):.4f}</p>', unsafe_allow_html=True)
-            
+        col_m1, col_m2, col_m3 = st.columns(3)
+        with col_m1:
             st.markdown('<div class="metric-card">', unsafe_allow_html=True)
             st.write(f"**Optimal x (Integer):** `{pyo.value(m.x):.2f}`")
             st.write(f"**Optimal y (Continuous):** `{pyo.value(m.y):.4f}`")
             st.markdown('</div>', unsafe_allow_html=True)
-            
+        
+        with col_m2:
             if m_rel:
                 st.info(f"💡 Relaxation GAP: **{((pyo.value(m_rel.obj) - pyo.value(m.obj))/pyo.value(m_rel.obj)*100):.2f}%**")
 
-        with col2:
-            # 3D Visualization with Plotly
-            x_vals = np.linspace(0, 10, 50)
-            y_vals = np.linspace(0, 10, 50)
-            X, Y = np.meshgrid(x_vals, y_vals)
-            Z = X + Y * X  # Objective function
-            
-            fig = go.Figure()
-            
-            # Surface
-            fig.add_trace(go.Surface(
-                x=x_vals, y=y_vals, z=Z,
-                colorscale='Viridis',
-                opacity=0.7,
-                showscale=False,
-                name='Objective Surface'
-            ))
-            
-            # Optimal Point
+        st.divider()
+
+        # 2. 2D Visualization (Contour + Constraints) 
+        st.subheader("🗺️ 2D Feasibility & Contour Map")
+        
+        # Grid for contour
+        x_2d = np.linspace(0, 10, 100)
+        y_2d = np.linspace(0, 10, 100)
+        X2, Y2 = np.meshgrid(x_2d, y_2d)
+        Z2 = X2 + Y2 * X2
+
+        fig2 = go.Figure()
+        
+        # Contour
+        fig2.add_trace(go.Contour(
+            z=Z2, x=x_2d, y=y_2d,
+            colorscale='Viridis',
+            contours_coloring='heatmap',
+            name='Objective',
+            opacity=0.8
+        ))
+
+        # Constraints
+        # C1: -x + 2yx = c1 => y = (c1 + x) / 2x
+        y_c1 = (c1_val + x_2d[1:]) / (2 * x_2d[1:])
+        fig2.add_trace(go.Scatter(x=x_2d[1:], y=y_c1, name='C1 Boundary', line=dict(color='red', dash='dash')))
+        
+        # C2: 2x + y = c2 => y = c2 - 2x
+        y_c2 = c2_val - 2 * x_2d
+        fig2.add_trace(go.Scatter(x=x_2d, y=y_c2, name='C2 Boundary', line=dict(color='yellow', dash='dash')))
+        
+        # C3: 2x - y = c3 => y = 2x - c3
+        y_c3 = 2 * x_2d - c3_val
+        fig2.add_trace(go.Scatter(x=x_2d, y=y_c3, name='C3 Boundary', line=dict(color='orange', dash='dash')))
+
+        # Optimal Point
+        fig2.add_trace(go.Scatter(
+            x=[pyo.value(m.x)], y=[pyo.value(m.y)],
+            mode='markers+text',
+            marker=dict(size=15, color='orange', symbol='diamond', line=dict(color='white', width=2)),
+            name='Integer Optimal',
+            text=["Optimal"], textposition="top center"
+        ))
+
+        fig2.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            xaxis_title='x',
+            yaxis_title='y',
+            yaxis=dict(range=[0, 10]),
+            xaxis=dict(range=[0, 10]),
+            height=600,
+            margin=dict(l=0, r=0, b=0, t=40)
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        st.info("The dashed lines represent constraints. The optimal solution must stay within the lower intersection area.")
+
+        st.divider()
+
+        # 3. 3D Visualization
+        st.subheader("🧊 3D Objective Optimization Surface")
+        x_vals = np.linspace(0, 10, 50)
+        y_vals = np.linspace(0, 10, 50)
+        X, Y = np.meshgrid(x_vals, y_vals)
+        Z = X + Y * X  # Objective function
+        
+        fig = go.Figure()
+        fig.add_trace(go.Surface(
+            x=x_vals, y=y_vals, z=Z,
+            colorscale='Viridis',
+            opacity=0.7,
+            showscale=False,
+            name='Objective Surface'
+        ))
+        
+        fig.add_trace(go.Scatter3d(
+            x=[pyo.value(m.x)], y=[pyo.value(m.y)], z=[pyo.value(m.obj)],
+            mode='markers',
+            marker=dict(size=10, color='orange', symbol='diamond', line=dict(color='white', width=2)),
+            name='MINLP Optimal'
+        ))
+        
+        if m_rel:
             fig.add_trace(go.Scatter3d(
-                x=[pyo.value(m.x)], y=[pyo.value(m.y)], z=[pyo.value(m.obj)],
+                x=[pyo.value(m_rel.x)], y=[pyo.value(m_rel.y)], z=[pyo.value(m_rel.obj)],
                 mode='markers',
-                marker=dict(size=10, color='orange', symbol='diamond', line=dict(color='white', width=2)),
-                name='MINLP Optimal'
-            ))
-            
-            if m_rel:
-                fig.add_trace(go.Scatter3d(
-                    x=[pyo.value(m_rel.x)], y=[pyo.value(m_rel.y)], z=[pyo.value(m_rel.obj)],
-                    mode='markers',
-                    marker=dict(size=8, color='cyan', symbol='circle', line=dict(color='white', width=1)),
-                    name='NLP Relaxed'
-                ))
-
-            fig.update_layout(
-                title='3D Objective Optimization Surface',
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
-                scene=dict(
-                    xaxis=dict(gridcolor='rgba(255,255,255,0.1)', backgroundcolor='rgba(0,0,0,0)'),
-                    yaxis=dict(gridcolor='rgba(255,255,255,0.1)', backgroundcolor='rgba(0,0,0,0)'),
-                    zaxis=dict(gridcolor='rgba(255,255,255,0.1)', backgroundcolor='rgba(0,0,0,0)'),
-                    xaxis_title='x',
-                    yaxis_title='y',
-                    zaxis_title='Objective'
-                ),
-                margin=dict(l=0, r=0, b=0, t=40),
-                height=500
-            )
-            st.plotly_chart(fig, use_container_width=True)
-            st.caption("✨ Tip: Rotate the 3D plot to see how the optimal point sits on the surface gradient.")
-
-            st.divider()
-
-            # --- 2D Visualization (Contour + Constraints) ---
-            st.subheader("🗺️ 2D Feasibility & Contour Map")
-            
-            # Grid for contour
-            x_2d = np.linspace(0, 10, 100)
-            y_2d = np.linspace(0, 10, 100)
-            X2, Y2 = np.meshgrid(x_2d, y_2d)
-            Z2 = X2 + Y2 * X2
-
-            fig2 = go.Figure()
-            
-            # Contour
-            fig2.add_trace(go.Contour(
-                z=Z2, x=x_2d, y=y_2d,
-                colorscale='Viridis',
-                contours_coloring='heatmap',
-                name='Objective',
-                opacity=0.8
+                marker=dict(size=8, color='cyan', symbol='circle', line=dict(color='white', width=1)),
+                name='NLP Relaxed'
             ))
 
-            # Constraints
-            # C1: -x + 2yx = c1 => y = (c1 + x) / 2x
-            y_c1 = (c1_val + x_2d[1:]) / (2 * x_2d[1:])
-            fig2.add_trace(go.Scatter(x=x_2d[1:], y=y_c1, name='C1 Boundary', line=dict(color='red', dash='dash')))
-            
-            # C2: 2x + y = c2 => y = c2 - 2x
-            y_c2 = c2_val - 2 * x_2d
-            fig2.add_trace(go.Scatter(x=x_2d, y=y_c2, name='C2 Boundary', line=dict(color='yellow', dash='dash')))
-            
-            # C3: 2x - y = c3 => y = 2x - c3
-            y_c3 = 2 * x_2d - c3_val
-            fig2.add_trace(go.Scatter(x=x_2d, y=y_c3, name='C3 Boundary', line=dict(color='orange', dash='dash')))
-
-            # Optimal Point
-            fig2.add_trace(go.Scatter(
-                x=[pyo.value(m.x)], y=[pyo.value(m.y)],
-                mode='markers+text',
-                marker=dict(size=15, color='orange', symbol='diamond', line=dict(color='white', width=2)),
-                name='Integer Optimal',
-                text=["Optimal"], textposition="top center"
-            ))
-
-            fig2.update_layout(
-                template='plotly_dark',
-                paper_bgcolor='rgba(0,0,0,0)',
-                plot_bgcolor='rgba(0,0,0,0)',
+        fig.update_layout(
+            template='plotly_dark',
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(0,0,0,0)',
+            scene=dict(
+                xaxis=dict(gridcolor='rgba(255,255,255,0.1)', backgroundcolor='rgba(0,0,0,0)'),
+                yaxis=dict(gridcolor='rgba(255,255,255,0.1)', backgroundcolor='rgba(0,0,0,0)'),
+                zaxis=dict(gridcolor='rgba(255,255,255,0.1)', backgroundcolor='rgba(0,0,0,0)'),
                 xaxis_title='x',
                 yaxis_title='y',
-                yaxis=dict(range=[0, 10]),
-                xaxis=dict(range=[0, 10]),
-                height=500,
-                margin=dict(l=0, r=0, b=0, t=40)
-            )
-            st.plotly_chart(fig2, use_container_width=True)
-            st.info("The dashed lines represent constraints. The optimal solution must stay within the lower intersection area.")
+                zaxis_title='Objective'
+            ),
+            margin=dict(l=0, r=0, b=0, t=40),
+            height=700
+        )
+        st.plotly_chart(fig, use_container_width=True)
+        st.caption("✨ Tip: Rotate the 3D plot to see how the optimal point sits on the surface gradient.")
+
 
         # Logs
         if show_logs:
