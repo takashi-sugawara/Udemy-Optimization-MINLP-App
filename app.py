@@ -220,29 +220,49 @@ if st.session_state.res:
             z=Z2, x=x_2d, y=y_2d,
             colorscale='Viridis',
             contours_coloring='heatmap',
-            name='Objective',
-            opacity=0.8
+            name='Objective Intensity',
+            opacity=0.8,
+            colorbar=dict(title='Obj Value', x=1.1)
         ))
 
-        # Constraints
+        # --- Feasibility Mask (Shading Infeasible Areas) ---
+        # Condition: All constraints must be satisfied
+        # C1: -x + 2yx <= c1, C2: 2x + y <= c2, C3: 2x - y <= c3
+        feasible = ((-X2 + 2 * Y2 * X2 <= c1_val) & 
+                    (2 * X2 + Y2 <= c2_val) & 
+                    (2 * X2 - Y2 <= c3_val))
+        
+        # Create a semi-transparent overlay for infeasible regions
+        mask = np.where(feasible, 0, 1)
+        fig2.add_trace(go.Heatmap(
+            z=mask, x=x_2d, y=y_2d,
+            colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0,0,0,0.6)']],
+            showscale=False,
+            hoverinfo='skip',
+            name='Infeasible Area'
+        ))
+
+        # Constraints Boundary Lines
         # C1: -x + 2yx = c1 => y = (c1 + x) / 2x
-        y_c1 = (c1_val + x_2d[1:]) / (2 * x_2d[1:])
-        fig2.add_trace(go.Scatter(x=x_2d[1:], y=y_c1, name='C1 Boundary', line=dict(color='red', dash='dash')))
+        # Avoid division by zero at x=0
+        safe_x = x_2d[x_2d > 0.01]
+        y_c1 = (c1_val + safe_x) / (2 * safe_x)
+        fig2.add_trace(go.Scatter(x=safe_x, y=y_c1, name='C1: -x + 2yx ≤ c1', line=dict(color='red', dash='dash')))
         
         # C2: 2x + y = c2 => y = c2 - 2x
         y_c2 = c2_val - 2 * x_2d
-        fig2.add_trace(go.Scatter(x=x_2d, y=y_c2, name='C2 Boundary', line=dict(color='yellow', dash='dash')))
+        fig2.add_trace(go.Scatter(x=x_2d, y=y_c2, name='C2: 2x + y ≤ c2', line=dict(color='yellow', dash='dash')))
         
         # C3: 2x - y = c3 => y = 2x - c3
         y_c3 = 2 * x_2d - c3_val
-        fig2.add_trace(go.Scatter(x=x_2d, y=y_c3, name='C3 Boundary', line=dict(color='orange', dash='dash')))
+        fig2.add_trace(go.Scatter(x=x_2d, y=y_c3, name='C3: 2x - y ≤ c3', line=dict(color='orange', dash='dash')))
 
         # Optimal Point
         fig2.add_trace(go.Scatter(
             x=[pyo.value(m.x)], y=[pyo.value(m.y)],
             mode='markers+text',
             marker=dict(size=15, color='orange', symbol='diamond', line=dict(color='white', width=2)),
-            name='Integer Optimal',
+            name='MINLP Optimal',
             text=["Optimal"], textposition="top center"
         ))
 
@@ -255,10 +275,17 @@ if st.session_state.res:
             yaxis=dict(range=[0, 10]),
             xaxis=dict(range=[0, 10]),
             height=600,
-            margin=dict(l=0, r=0, b=0, t=40)
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=-0.2,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=0, r=100, b=100, t=40)
         )
         st.plotly_chart(fig2, use_container_width=True)
-        st.info("The dashed lines represent constraints. The optimal solution must stay within the lower intersection area.")
+        st.info("💡 **Visualization Tip**: The **shaded dark areas** are infeasible (constraint-breaking). The optimal solution always sits in the bright feasible region.")
 
         st.divider()
 
