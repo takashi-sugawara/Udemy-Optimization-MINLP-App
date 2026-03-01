@@ -1,7 +1,6 @@
 import streamlit as st
 import pyomo.environ as pyo
 from pyomo.opt import SolverFactory
-from amplpy import modules
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
@@ -9,50 +8,24 @@ import pandas as pd
 import io
 import contextlib
 import shutil
+import os
+import sys
 
-# --- Universal Solver Setup ---
-# This ensures solvers can be found on both Streamlit Cloud (Auto-install) and Local Mac
+# --- Robust Solver Path Detection (Inspired by Sec8) ---
 def get_solver_path(solver_name):
-    # Try system PATH
+    # 1. Check in PATH
     path = shutil.which(solver_name)
-    if path:
-        return path
+    if path: return path
     
-    # Try amplpy-modules discovery
-    try:
-        from amplpy import modules
-        return modules.find(solver_name)
-    except:
-        return None
+    # 2. Check the directory of the current Python executable (Reliable for Conda)
+    bin_dir = os.path.dirname(sys.executable)
+    path_in_bin = os.path.join(bin_dir, solver_name)
+    if os.path.exists(path_in_bin): return path_in_bin
 
-def check_and_install_solvers():
-    # Determine which solvers are missing
-    missing = []
-    if get_solver_path('ipopt') is None:
-        missing.append('coin')  # Ipopt lives in the 'coin' module
-    if get_solver_path('cbc') is None:
-        missing.append('cbc')
-
-    if missing:
-        # Remove duplicates just in case
-        missing = list(set(missing))
-        with st.status(f"🛠️ Installing missing solvers: {', '.join(missing)}...") as status:
-            try:
-                from amplpy import modules
-                modules.install(missing)
-                # After installation, refresh PATH by re‑adding the directories where the binaries were placed
-                for solver in ['ipopt', 'cbc']:
-                    p = modules.find(solver)
-                    if p:
-                        dir_path = os.path.dirname(p)
-                        if dir_path not in os.environ.get('PATH', ''):
-                            os.environ['PATH'] = f"{dir_path}:{os.environ.get('PATH', '')}"
-                status.update(label="✅ Solvers installed successfully!", state="complete", expanded=False)
-                # Force a full rerun so the newly‑installed executables are discovered
-                st.rerun()
-            except Exception as e:
-                st.error(f"❌ Failed to install solvers: {e}")
-                status.update(label="❌ Installation failed", state="error")
+    # 3. Check common Conda/Linux paths on Streamlit Cloud
+    for p in [f"/home/adminuser/.conda/bin/{solver_name}", f"/opt/conda/bin/{solver_name}", f"/usr/bin/{solver_name}"]:
+        if os.path.exists(p): return p
+    return None
 
 # Page Config
 st.set_page_config(
@@ -108,9 +81,6 @@ st.markdown("""
 st.title("🚀 MINLP Master Visualizer")
 st.caption("Mixed-Integer Non-Linear Programming Dashboard | Powered by MindtPy & COIN-OR")
 
-# Check and install solvers if missing (one-time on app start)
-check_and_install_solvers()
-
 # --- Sidebar: Expert Controls ---
 with st.sidebar:
     st.header("⚙️ Solver Configuration")
@@ -133,28 +103,22 @@ with st.sidebar:
     
     st.divider()
     st.markdown("### 🧬 Architecture")
-    st.info(f"Orchestrator: **MindtPy ({strategy})**\n\nDiscrete Solver: **CBC**\n\nContinuous Solver: **Ipopt**")
+    st.info(f"Orchestrator: **MindtPy ({strategy})**\n\nDiscrete Solver: **GLPK**\n\nContinuous Solver: **Ipopt**")
 
 # --- Optimization Engine ---
-import os
-
 def solve_minlp(c1, c2, c3, strategy='OA', integer_constrained=True):
     model = pyo.ConcreteModel()
     
-    # Discovery of solver paths and add to PATH for sub-solvers
+    # Discovery of solver paths
     ipopt_path = get_solver_path('ipopt')
-    cbc_path = get_solver_path('cbc')
+    glpk_path = get_solver_path('glpk')
     
-    # Add solver directories to system PATH so MindtPy sub-solvers can find them
-    new_paths = []
-    for p in [ipopt_path, cbc_path]:
+    # Force system path update for sub-solvers
+    for p in [ipopt_path, glpk_path]:
         if p:
             dir_path = os.path.dirname(p)
             if dir_path not in os.environ['PATH']:
-                new_paths.append(dir_path)
-    
-    if new_paths:
-        os.environ['PATH'] = os.pathsep.join(new_paths) + os.pathsep + os.environ['PATH']
+                os.environ['PATH'] = dir_path + os.pathsep + os.environ['PATH']
 
     domain = pyo.Integers if integer_constrained else pyo.Reals
     model.x = pyo.Var(within=domain, bounds=(0, 10))
@@ -169,16 +133,21 @@ def solve_minlp(c1, c2, c3, strategy='OA', integer_constrained=True):
     with contextlib.redirect_stdout(log_buffer), contextlib.redirect_stderr(log_buffer):
         try:
             if integer_constrained:
-                # Use MindtPy for Mixed-Integer
+                # Specify executables directly if found, or fall back to PATH
                 opt = SolverFactory('mindtpy')
-                opt.solve(model, 
-                          mip_solver='cbc', 
-                          nlp_solver='ipopt', 
-                          strategy=strategy, 
-                          tee=True)
+                solve_kwargs = {
+                    'mip_solver': 'glpk',
+                    'nlp_solver': 'ipopt',
+                    'strategy': strategy,
+                    'tee': True
+                }
+                # If paths were found, MindtPy usually finds them in PATH if we updated os.environ
+                opt.solve(model, **solve_kwargs)
             else:
-                # Use simple Ipopt for Relaxation (NLP)
-                opt = SolverFactory('ipopt') # Should be in PATH now
+                if ipopt_path:
+                    opt = SolverFactory('ipopt', executable=ipopt_path)
+                else:
+                    opt = SolverFactory('ipopt')
                 opt.solve(model, tee=True)
             return model, True, log_buffer.getvalue()
         except Exception as e:
@@ -199,118 +168,138 @@ if run_button:
         # Save results
         if s_main is True:
             st.session_state.res = {
-                "x": pyo.value(m_main.x), "y": pyo.value(m_main.y), "obj": pyo.value(m_main.obj),
-                "x_rel": pyo.value(m_rel.x) if s_rel is True else None,
-                "y_rel": pyo.value(m_rel.y) if s_rel is True else None,
-                "obj_rel": pyo.value(m_rel.obj) if s_rel is True else None,
-                "logs": l_main, "status": "Optimal"
+                'm': m_main,
+                'l': l_main,
+                'rel': m_rel if s_rel is True else None
             }
+            st.toast("Success!", icon="✅")
         else:
-            st.session_state.res = {"status": "Infeasible", "error": s_main, "logs": l_main}
+            st.error(f"Optimization Failed: {s_main}")
+            if l_main:
+                with st.expander("View Error Details"):
+                    st.code(l_main)
 
-with tab_math:
-    st.header("📝 Mathematical Model")
-    st.latex(r"\max \quad Z = x + y \cdot x")
-    st.latex(rf"s.t. \quad -x + 2yx \le {c1_val} \quad (C1)")
-    st.latex(rf" \quad \quad 2x + y \le {c2_val} \quad (C2)")
-    st.latex(rf" \quad \quad 2x - y \le {c3_val} \quad (C3)")
-    st.latex(r"x \in \mathbb{Z} \cap [0, 10], \quad y \in \mathbb{R} \cap [0, 10]")
+# --- Visualization Render ---
+if st.session_state.res:
+    m = st.session_state.res['m']
+    l = st.session_state.res['l']
+    m_rel = st.session_state.res['rel']
 
-with tab_vis:
-    if st.session_state.res:
-        res = st.session_state.res
+    with tab_vis:
+        col1, col2 = st.columns([1, 2])
         
-        if res["status"] == "Infeasible":
-            error_msg = str(res.get('error', 'Unknown Error'))
-            if "dlsym" in error_msg or "symbol not found" in error_msg:
-                st.error("⚙️ **SYSTEM / SOLVER ERROR**")
-                st.warning(f"Technical details: {error_msg}")
-                st.info("This usually means the selected strategy requires system libraries or solvers that are not fully compatible with your current OS/Build. Please try switching back to **OA** strategy.")
-            else:
-                st.error(f"❌ **MATHEMATICAL INFEASIBILITY**")
-                st.warning(f"The solver reported: {error_msg}")
-                st.info("Try loosening the constraints (increasing c1, c2, or c3). The feasible region might be empty.")
-        else:
-            # Metric Cards
-            c1, c2, c3, c4 = st.columns(4)
-            with c1: st.markdown(f'<div class="metric-card"><div class="metric-label">Optimal X</div><div class="metric-value">{int(round(res["x"]))}</div></div>', unsafe_allow_html=True)
-            with c2: st.markdown(f'<div class="metric-card"><div class="metric-label">Optimal Y</div><div class="metric-value">{res["y"]:.3f}</div></div>', unsafe_allow_html=True)
-            with c3: st.markdown(f'<div class="metric-card"><div class="metric-label">Objective Z</div><div class="metric-value">{res["obj"]:.3f}</div></div>', unsafe_allow_html=True)
-            with c4:
-                gap = abs(res["obj"] - res["obj_rel"]) if res["obj_rel"] else 0
-                st.markdown(f'<div class="metric-card" style="border-left-color: #ff7f0e;"><div class="metric-label">Integrality Gap</div><div class="metric-value">{gap:.3f}</div></div>', unsafe_allow_html=True)
-
-            if show_logs:
-                with st.expander("📂 Iteration Logs & Solver Strategy Trace", expanded=False):
-                    st.code(res["logs"])
-
-            # Visualization
-            x_g = np.linspace(0, 10, 100)
-            y_g = np.linspace(0, 10, 100)
-            X, Y = np.meshgrid(x_g, y_g)
-            Z = X + Y * X
-            feas = ((-X + 2*Y*X <= c1_val) & (2*X + Y <= c2_val) & (2*X - Y <= c3_val)).astype(float)
+        with col1:
+            st.markdown('<p class="metric-label">Optimal Objective Value</p>', unsafe_allow_html=True)
+            st.markdown(f'<p class="metric-value">{pyo.value(m.obj):.4f}</p>', unsafe_allow_html=True)
             
-            # --- 2D Plot Section ---
-            st.subheader("📍 2D Feasibility & Optimal Point")
-            fig2d = go.Figure()
-            fig2d.add_trace(go.Contour(x=x_g, y=y_g, z=feas, showscale=False, colorscale=[[0, 'rgba(0,0,0,0)'], [1, 'rgba(0, 255, 0, 0.2)']], name="Feasible"))
-            fig2d.add_trace(go.Contour(x=x_g, y=y_g, z=Z, colorscale='Blues', opacity=0.3, name="Objective"))
-            fig2d.add_trace(go.Scatter(x=[res['x']], y=[res['y']], mode='markers+text', marker=dict(size=15, color='orange', symbol='star'), text=["MINLP ★"], name="MINLP"))
-            if res['x_rel']:
-                fig2d.add_trace(go.Scatter(x=[res['x_rel']], y=[res['y_rel']], mode='markers', marker=dict(size=10, color='blue'), name="Relaxed"))
+            st.markdown('<div class="metric-card">', unsafe_allow_html=True)
+            st.write(f"**Optimal x (Integer):** `{pyo.value(m.x):.2f}`")
+            st.write(f"**Optimal y (Continuous):** `{pyo.value(m.y):.4f}`")
+            st.markdown('</div>', unsafe_allow_html=True)
             
-            fig2d.update_layout(xaxis_title="X", yaxis_title="Y", height=600, margin=dict(l=0,r=0,b=0,t=30), template="plotly_white")
-            st.plotly_chart(fig2d, use_container_width=True)
+            if m_rel:
+                st.info(f"💡 Relaxation GAP: **{((pyo.value(m_rel.obj) - pyo.value(m.obj))/pyo.value(m_rel.obj)*100):.2f}%**")
 
-            st.divider()
+        with col2:
+            # 3D Visualization with Plotly
+            x_vals = np.linspace(0, 10, 50)
+            y_vals = np.linspace(0, 10, 50)
+            X, Y = np.meshgrid(x_vals, y_vals)
+            Z = X + Y * X  # Objective function
+            
+            fig = go.Figure()
+            
+            # Surface
+            fig.add_trace(go.Surface(
+                x=x_vals, y=y_vals, z=Z,
+                colorscale='Viridis',
+                opacity=0.7,
+                showscale=False,
+                name='Objective Surface'
+            ))
+            
+            # Optimal Point
+            fig.add_trace(go.Scatter3d(
+                x=[pyo.value(m.x)], y=[pyo.value(m.y)], z=[pyo.value(m.obj)],
+                mode='markers',
+                marker=dict(size=10, color='orange', symbol='diamond', line=dict(color='white', width=2)),
+                name='MINLP Optimal'
+            ))
+            
+            if m_rel:
+                fig.add_trace(go.Scatter3d(
+                    x=[pyo.value(m_rel.x)], y=[pyo.value(m_rel.y)], z=[pyo.value(m_rel.obj)],
+                    mode='markers',
+                    marker=dict(size=8, color='cyan', symbol='circle', line=dict(color='white', width=1)),
+                    name='NLP Relaxed'
+                ))
 
-            # --- 3D Plot Section ---
-            st.subheader("⛰️ 3D Objective Surface")
-            st.info("💡 **Interactive Tip**: Use your mouse to rotate (drag), zoom (scroll), and pan (right-click drag) the 3D surface below!")
-            
-            Z_masked = np.where(feas > 0, Z, np.nan)
-            fig3d = go.Figure(data=[go.Surface(x=x_g, y=y_g, z=Z, opacity=0.2, colorscale='Greys', showscale=False, hoverinfo='skip')])
-            fig3d.add_trace(go.Surface(x=x_g, y=y_g, z=Z_masked, colorscale='Viridis', name="Feasible Surface", colorbar=dict(title="Z Value", x=1.1)))
-            fig3d.add_trace(go.Scatter3d(x=[res['x']], y=[res['y']], z=[res['obj']], mode='markers', marker=dict(size=8, color='orange', symbol='diamond'), name="Optimal Solution"))
-            
-            fig3d.update_layout(
+            fig.update_layout(
+                title='3D Objective Optimization Surface',
                 scene=dict(
-                    xaxis_title='X', yaxis_title='Y', zaxis_title='Z (Objective)',
-                    camera=dict(eye=dict(x=1.5, y=1.5, z=1.2)) # Better initial angle
+                    xaxis_title='x',
+                    yaxis_title='y',
+                    zaxis_title='Objective'
                 ),
-                height=700,
-                margin=dict(l=0,r=0,b=0,t=30)
+                margin=dict(l=0, r=0, b=0, t=40),
+                height=500
             )
-            st.plotly_chart(fig3d, use_container_width=True)
-    else:
-        st.info("Click 'RUN OPTIMIZATION' to start the analysis.")
+            st.plotly_chart(fig, use_container_width=True)
+            st.caption("✨ Tip: Rotate the 3D plot to see how the optimal point sits on the surface gradient.")
 
-with tab_sens:
-    st.header("📈 Sensitivity Trace: Impact of C1")
-    st.write("We sweep the C1 value from 0 to 20 to see how it shifts the optimal objective.")
-    if st.button("Generate Sensitivity Analysis"):
-        with st.spinner("Sweeping C1 values..."):
-            trace_data = []
-            # Performance note: Increased points for smoother curves
-            for test_c1 in np.linspace(0, 20, 15):
-                # Run MINLP
-                m, s, _ = solve_minlp(test_c1, c2_val, c3_val, integer_constrained=True)
-                if s is True: trace_data.append({"C1": test_c1, "Obj": pyo.value(m.obj), "Type": "MINLP"})
+        # Logs
+        if show_logs:
+            with st.expander("📋 MindtPy Solver Execution Logs", expanded=False):
+                st.code(l)
+
+    with tab_sens:
+        st.subheader("📈 Sensitivity Study: Constraint Boundaries")
+        st.write("Visualizing how varying $c_1$ (Constraint 1 constant) impacts the final outcome.")
+        
+        c1_range = np.linspace(max(0, c1_val-5), c1_val+5, 10)
+        sens_data = []
+        
+        with st.status("Walking through parameter space...") as status:
+            for test_c in c1_range:
+                # Quick solve for sensitivity (silent)
+                model_s, ok, _ = solve_minlp(test_c, c2_val, c3_val, strategy='OA')
+                if ok:
+                    sens_data.append({
+                        "Constraint C1": test_c,
+                        "Objective": pyo.value(model_s.obj),
+                        "Type": "MINLP (Integer)"
+                    })
                 
-                # Run Relaxed
-                m2, s2, _ = solve_minlp(test_c1, c2_val, c3_val, integer_constrained=False)
-                if s2 is True: trace_data.append({"C1": test_c1, "Obj": pyo.value(m2.obj), "Type": "Relaxed"})
-            
-            df = pd.DataFrame(trace_data)
-            fig_sens = px.line(df, x="C1", y="Obj", color="Type", markers=True, 
-                               title="Objective Value vs C1 Constant Sensitivity",
-                               color_discrete_map={"MINLP": "#ff7f0e", "Relaxed": "#1f77b4"})
-            
-            fig_sens.update_layout(template="plotly_white", height=500)
-            st.plotly_chart(fig_sens, use_container_width=True)
-            st.markdown("""
-            **What we learn:**
-            - The **Blue Line (Relaxed)** is smooth because it's a continuous problem.
-            - The **Orange Line (MINLP)** often shows 'jumps'. This happens when the optimal integer $x$ suddenly shifts from one value to another (e.g., from 5 to 6) as the constraint is loosened.
-            """)
+                # Also solve relaxed for comparison
+                model_r, ok_r, _ = solve_minlp(test_c, c2_val, c3_val, strategy='OA', integer_constrained=False)
+                if ok_r:
+                    sens_data.append({
+                        "Constraint C1": test_c,
+                        "Objective": pyo.value(model_r.obj),
+                        "Type": "Relaxed (NLP)"
+                    })
+            status.update(label="Sensitivity Map Generated!", state="complete")
+
+        df_sens = pd.DataFrame(sens_data)
+        fig_sens = px.line(df_sens, x="Constraint C1", y="Objective", color="Type", 
+                           markers=True,
+                           color_discrete_map={"MINLP (Integer)": "orange", "Relaxed (NLP)": "cyan"},
+                           title="Impact of Constraint C1 on Global Utility")
+        
+        fig_sens.add_vline(x=c1_val, line_dash="dash", line_color="red", annotation_text="Current C1")
+        st.plotly_chart(fig_sens, use_container_width=True)
+
+    with tab_math:
+        st.subheader("📝 Mathematical Definition")
+        st.latex(r" \max_{x, y} \quad Z = x + yx ")
+        st.latex(r" \text{subject to:} ")
+        st.latex(rf" -x + 2yx \le {c1_val:.2f} \quad \text{{(Non-linear Constraint)}} ")
+        st.latex(rf" 2x + y \le {c2_val:.2f} ")
+        st.latex(rf" 2x - y \le {c3_val:.2f} ")
+        st.latex(r" x \in \{0, 1, \dots, 10\} \quad \text{(Integer constraint)} ")
+        st.latex(r" y \in [0, 10] \quad \text{(Continuous constraint)} ")
+        
+        st.success("This model is a classic Mixed-Integer Non-Linear Programming (MINLP) problem because it contains both integer variables and non-linear terms ($yx$).")
+else:
+    with tab_vis:
+        st.info("Adjust the parameters in the sidebar and click **RUN OPTIMIZATION** to begin.")

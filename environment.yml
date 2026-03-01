@@ -1,0 +1,14 @@
+name: minlp-app
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - ipopt
+  - glpk
+  - pip
+  - pip:
+    - pyomo
+    - streamlit
+    - plotly
+    - numpy
+    - pandas
