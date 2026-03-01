@@ -30,8 +30,8 @@ def check_and_install_solvers():
     missing = []
     if get_solver_path('ipopt') is None:
         missing.append('coin')  # Ipopt lives in the 'coin' module
-    if get_solver_path('glpk') is None:
-        missing.append('glpk')
+    if get_solver_path('cbc') is None:
+        missing.append('cbc')
 
     if missing:
         # Remove duplicates just in case
@@ -41,7 +41,7 @@ def check_and_install_solvers():
                 from amplpy import modules
                 modules.install(missing)
                 # After installation, refresh PATH by re‑adding the directories where the binaries were placed
-                for solver in ['ipopt', 'glpk']:
+                for solver in ['ipopt', 'cbc']:
                     p = modules.find(solver)
                     if p:
                         dir_path = os.path.dirname(p)
@@ -133,7 +133,7 @@ with st.sidebar:
     
     st.divider()
     st.markdown("### 🧬 Architecture")
-    st.info(f"Orchestrator: **MindtPy ({strategy})**\n\nDiscrete Solver: **GLPK**\n\nContinuous Solver: **Ipopt**")
+    st.info(f"Orchestrator: **MindtPy ({strategy})**\n\nDiscrete Solver: **CBC**\n\nContinuous Solver: **Ipopt**")
 
 # --- Optimization Engine ---
 import os
@@ -143,11 +143,11 @@ def solve_minlp(c1, c2, c3, strategy='OA', integer_constrained=True):
     
     # Discovery of solver paths and add to PATH for sub-solvers
     ipopt_path = get_solver_path('ipopt')
-    glpk_path = get_solver_path('glpk')
+    cbc_path = get_solver_path('cbc')
     
     # Add solver directories to system PATH so MindtPy sub-solvers can find them
     new_paths = []
-    for p in [ipopt_path, glpk_path]:
+    for p in [ipopt_path, cbc_path]:
         if p:
             dir_path = os.path.dirname(p)
             if dir_path not in os.environ['PATH']:
@@ -172,7 +172,7 @@ def solve_minlp(c1, c2, c3, strategy='OA', integer_constrained=True):
                 # Use MindtPy for Mixed-Integer
                 opt = SolverFactory('mindtpy')
                 opt.solve(model, 
-                          mip_solver='glpk', 
+                          mip_solver='cbc', 
                           nlp_solver='ipopt', 
                           strategy=strategy, 
                           tee=True)
