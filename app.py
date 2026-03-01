@@ -13,11 +13,16 @@ import shutil
 # --- Universal Solver Setup ---
 # This ensures solvers can be found on both Streamlit Cloud (Conda) and Local Mac (amplpy)
 def get_solver_path(solver_name):
+    # First, try to find in system PATH (e.g. locally installed or from Conda)
     path = shutil.which(solver_name)
     if path:
         return path
+    
+    # Second, try to find in amplpy-modules (reliable for Streamlit Cloud)
     try:
-        return modules.find(solver_name)
+        from amplpy import modules
+        path = modules.find(solver_name)
+        return path
     except:
         return None
 

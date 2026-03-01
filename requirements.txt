@@ -1,6 +1,8 @@
 streamlit
 pyomo
 amplpy
+amplpy-modules-ipopt
+amplpy-modules-glpk
 numpy
 plotly
 pandas
