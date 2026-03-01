@@ -1,0 +1,15 @@
+name: minlp-env
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - streamlit
+  - pyomo
+  - ipopt
+  - glpk
+  - numpy
+  - plotly
+  - pandas
+  - pip
+  - pip:
+    - amplpy
